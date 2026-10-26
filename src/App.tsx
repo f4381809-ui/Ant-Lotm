@@ -2,14 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import type { FormEvent, ReactNode } from 'react';
 import {
   ArrowDownToLine, ArrowLeft, ArrowRight, BookOpen, Check, ChevronRight,
-  CircleHelp, Compass, Feather, FlaskConical, FolderOpen, History, MapPin,
-  MoreHorizontal, Plus, Search, Shield, Sparkles, Trash2, Upload, Users, X,
+  CircleHelp, Compass, Feather, FlaskConical, FolderOpen, History, ImagePlus,
+  MapPin, Pencil, Plus, Search, Shield, Sparkles, Trash2, Upload, Users, X,
 } from 'lucide-react';
-import { addEntry, advanceCharacter, createCharacter, isCharacter, PATHWAYS, STORAGE_KEY } from './model';
+import { advanceCharacter, editEntryText, isCharacter, STORAGE_KEY } from './model';
 import type { Character, Entry } from './model';
+import CharacterForm from './CharacterForm';
+import EntryComposer from './EntryComposer';
+import PortraitInput from './PortraitInput';
 
 type View = 'characters' | 'journal' | 'guide';
-type Modal = 'create' | 'edit' | 'entry' | 'advance' | 'delete' | null;
+type Modal = 'create' | 'edit' | 'portrait' | 'edit-entry' | 'advance' | 'delete' | null;
 const kindLabels: Record<Entry['kind'], string> = {
   acting: 'Отыгрыш', study: 'Исследование', ritual: 'Ритуал', other: 'Заметка', advance: 'Продвижение',
 };
@@ -39,72 +42,72 @@ function Seal({ className = '' }: { className?: string }) {
   </svg>;
 }
 
-function Dialog({ title, subtitle, children, onClose }: { title: string; subtitle: string; children: ReactNode; onClose: () => void }) {
+function Dialog({ title, subtitle, children, onClose }: {
+  title: string; subtitle: string; children: ReactNode; onClose: () => void;
+}) {
   const ref = useRef<HTMLDialogElement>(null);
   useEffect(() => { ref.current?.showModal(); }, []);
-  return <dialog ref={ref} className="dialog" onCancel={onClose} onClick={event => { if (event.target === event.currentTarget) onClose(); }} aria-labelledby="dialog-title">
-    <div className="dialog-header"><div><div className="eyebrow">АРХИВ ПОТУСТОРОННИХ</div><h2 id="dialog-title">{title}</h2><p>{subtitle}</p></div><button className="icon-button" aria-label="Закрыть" onClick={onClose}><X size={20} /></button></div>
+  return <dialog ref={ref} className="dialog" onCancel={onClose} onClick={event => {
+    if (event.target !== event.currentTarget) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (event.clientX < rect.left || event.clientX > rect.right || event.clientY < rect.top || event.clientY > rect.bottom) onClose();
+  }} aria-labelledby="dialog-title">
+    <div className="dialog-header"><div><div className="eyebrow">АРХИВ ПОТУСТОРОННИХ</div><h2 id="dialog-title">{title}</h2><p>{subtitle}</p></div><button className="icon-button" aria-label="Закрыть" onClick={onClose}><X size={21} /></button></div>
     {children}
   </dialog>;
 }
 
-function CharacterForm({ initial, onSave, onClose }: { initial?: Character; onSave: (character: Character) => void; onClose: () => void }) {
-  const c = initial ?? createCharacter();
-  function submit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const string = (key: string) => String(data.get(key) ?? '').trim();
-    if (!string('name') || !string('potion')) return;
-    onSave({ ...c, name: string('name'), epithet: string('epithet'), pathway: string('pathway'),
-      sequence: initial ? initial.sequence : Number(data.get('sequence')), potion: string('potion'), age: string('age'),
-      occupation: string('occupation'), origin: string('origin'), bio: string('bio'), principles: string('principles') });
-  }
-  return <form onSubmit={submit}>
-    <div className="form-grid">
-      <label className="span-2">Имя персонажа <span>*</span><input autoFocus name="name" defaultValue={c.name} maxLength={80} placeholder="Как вас знают в этом мире?" required pattern=".*\S.*" /></label>
-      <label className="span-2">Титул или прозвище<input name="epithet" defaultValue={c.epithet} maxLength={100} placeholder="Например, Странник за серым туманом" /></label>
-      <label>Путь<select name="pathway" defaultValue={c.pathway}>{PATHWAYS.map(p => <option key={p}>{p}</option>)}</select></label>
-      <label>Последовательность<select name="sequence" defaultValue={c.sequence} disabled={!!initial}>{Array.from({ length: 10 }, (_, i) => 9 - i).map(n => <option key={n} value={n}>{n}{n === 9 ? ' · Начало пути' : n === 0 ? ' · Божество' : ''}</option>)}</select>{initial && <small>Меняется через продвижение.</small>}</label>
-      <label className="span-2">Текущее зелье <span>*</span><input name="potion" defaultValue={c.potion} maxLength={80} required pattern=".*\S.*" /></label>
-      <label>Возраст<input name="age" defaultValue={c.age} placeholder="Например, 24 года" maxLength={40} /></label>
-      <label>Род занятий<input name="occupation" defaultValue={c.occupation} placeholder="Детектив, учёный…" maxLength={80} /></label>
-      <label className="span-2">Место происхождения<input name="origin" defaultValue={c.origin} placeholder="Город, страна" maxLength={100} /></label>
-      <label className="span-2">История персонажа<textarea name="bio" defaultValue={c.bio} rows={3} maxLength={10000} placeholder="Прошлое, характер, цели и то, что лучше оставить в тайне…" /></label>
-      <label className="span-2">Принципы отыгрыша<textarea name="principles" defaultValue={c.principles} rows={3} maxLength={5000} placeholder="Каждый принцип — с новой строки" /></label>
-    </div>
-    <div className="form-footer"><button type="button" className="button secondary" onClick={onClose}>Отмена</button><button className="button primary" type="submit"><Check size={16} />{initial ? 'Сохранить анкету' : 'Создать персонажа'}</button></div>
+function PortraitForm({ character, onSave, onClose }: {
+  character: Character; onSave: (c: Character) => void; onClose: () => void;
+}) {
+  const [portrait, setPortrait] = useState(character.portrait ?? '');
+  const [busy, setBusy] = useState(false);
+  return <form onSubmit={e => { e.preventDefault(); if (!busy) onSave({ ...character, portrait }); }}>
+    <PortraitInput value={portrait} onChange={setPortrait} onBusyChange={setBusy} />
+    <p className="form-hint">Портрет сохраняется вместе с анкетой и входит в JSON-архив. Интернет для его просмотра не нужен.</p>
+    <div className="form-footer"><button type="button" className="button secondary" onClick={onClose}>Отмена</button><button className="button primary" type="submit" disabled={busy}><Check size={17} />Сохранить портрет</button></div>
   </form>;
 }
 
-function EntryForm({ character, onSave, onClose }: { character: Character; onSave: (c: Character) => void; onClose: () => void }) {
-  const [delta, setDelta] = useState('5');
-  const next = Math.round(Math.max(0, Math.min(100, character.digestion + (Number(delta) || 0))) * 10) / 10;
+function EditEntryForm({ character, entry, onSave, onClose }: {
+  character: Character; entry: Entry; onSave: (c: Character) => void; onClose: () => void;
+}) {
+  const [title, setTitle] = useState(entry.title);
+  const [note, setNote] = useState(entry.note);
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    const data = new FormData(event.currentTarget);
-    const title = String(data.get('title') ?? '').trim();
-    if (!title) return;
-    onSave(addEntry(character, { title, note: String(data.get('note') ?? '').trim(), kind: data.get('kind') as Entry['kind'], delta: Number(delta) }));
+    if (title.trim() || note.trim()) onSave(editEntryText(character, entry.id, title, note));
   }
   return <form onSubmit={submit}>
     <div className="form-grid">
-      <label className="span-2">Что произошло? <span>*</span><input autoFocus name="title" placeholder="Например, первое успешное гадание" maxLength={120} required pattern=".*\S.*" /></label>
-      <label>Тип записи<select name="kind"><option value="acting">Отыгрыш</option><option value="study">Исследование</option><option value="ritual">Ритуал</option><option value="other">Заметка</option></select></label>
-      <label>Изменение усвоения, %<input aria-label="Изменение усвоения, %" type="number" value={delta} min={-100} max={100} step="0.1" required onChange={e => setDelta(e.target.value)} /></label>
-      <label className="span-2">Подробности<textarea name="note" rows={4} maxLength={10000} placeholder="Как это помогло понять роль и усвоить зелье?" /></label>
+      <label className="span-2">Название записи<input autoFocus name="title" value={title} maxLength={120} required={!note.trim()} onChange={e => setTitle(e.target.value)} /></label>
+      <label className="span-2">Текст записи<textarea name="note" rows={9} value={note} maxLength={10000} required={!title.trim()} onChange={e => setNote(e.target.value)} /></label>
     </div>
-    <div className="progress-preview"><FlaskConical size={18} /><span>Усвоение зелья</span><strong>{character.digestion}% <ArrowRight size={14} /> {next}%</strong></div>
-    <p className="form-hint">Прибавку определяете вы или ведущий. Прогресс ограничен диапазоном 0–100%; в истории сохранится фактическое изменение.</p>
-    <div className="form-footer"><button type="button" className="button secondary" onClick={onClose}>Отмена</button><button type="submit" className="button primary"><Feather size={16} />Добавить запись</button></div>
+    <p className="form-hint">Здесь можно исправить текст. Дата, прибавка к усвоению и история продвижения сохранятся.</p>
+    <div className="form-footer"><button type="button" className="button secondary" onClick={onClose}>Отмена</button><button type="submit" className="button primary"><Check size={17} />Сохранить изменения</button></div>
   </form>;
 }
 
-function Entries({ entries, limit }: { entries: Entry[]; limit?: number }) {
-  if (!entries.length) return <div className="empty-entries"><Feather size={25} strokeWidth={1.2} /><p>Первые строки ещё не написаны</p><span>Запишите событие, которое приблизило вас к пониманию зелья.</span></div>;
+function Entries({ entries, limit, onEdit }: { entries: Entry[]; limit?: number; onEdit: (entry: Entry) => void }) {
+  if (!entries.length) return <div className="empty-entries"><Feather size={30} strokeWidth={1.2} /><p>Всё начинается с первой записи</p><span>Расскажите о событии в поле выше.<br />Даже маленькое открытие заслуживает строки.</span></div>;
   return <div className="entries">{entries.slice(0, limit).map(entry => <article className="entry" key={entry.id}>
-    <div className={`entry-icon ${entry.kind === 'advance' ? 'gold' : ''}`}>{entry.kind === 'advance' ? <Sparkles size={17} /> : entry.kind === 'study' ? <BookOpen size={17} /> : <Feather size={17} />}</div>
-    <div className="entry-content"><div className="entry-title"><h3>{entry.title}</h3><span className={`entry-delta ${entry.delta < 0 ? 'negative' : ''}`}>{entry.kind === 'advance' ? 'Новый этап' : entry.delta > 0 ? `+${entry.delta}%` : `${entry.delta}%`}</span></div>{entry.note && <p>{entry.note}</p>}<div className="entry-meta"><span>{kindLabels[entry.kind]}</span><span>·</span><time dateTime={entry.date}>{new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(entry.date))}</time></div></div>
+    <div className={`entry-icon ${entry.kind === 'advance' ? 'gold' : ''}`}>{entry.kind === 'advance' ? <Sparkles size={18} /> : entry.kind === 'study' ? <BookOpen size={18} /> : <Feather size={18} />}</div>
+    <div className="entry-content">
+      <div className="entry-title"><h3>{entry.title}</h3><span className={`entry-delta ${entry.delta < 0 ? 'negative' : ''}`}>{entry.kind === 'advance' ? 'Новый этап' : entry.delta > 0 ? `+${entry.delta}%` : `${entry.delta}%`}</span></div>
+      {entry.note && entry.note !== entry.title && <p>{entry.note}</p>}
+      <div className="entry-bottom"><div className="entry-meta"><span>{kindLabels[entry.kind]}</span><span>·</span><time dateTime={entry.date}>{new Intl.DateTimeFormat('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).format(new Date(entry.date))}</time></div><button className="entry-edit" aria-label={`Редактировать запись: ${entry.title}`} onClick={() => onEdit(entry)}><Pencil size={13} /><span>Исправить</span></button></div>
+    </div>
   </article>)}</div>;
+}
+
+function PotionCard({ character: c, onAdvance }: { character: Character; onAdvance: () => void }) {
+  return <section className="card potion-card">
+    <div className="section-heading"><span className="section-label"><FlaskConical size={18} />ВАШЕ ЗЕЛЬЕ</span><span className={`status-tag ${c.digestion === 100 ? 'complete' : ''}`}>{c.digestion === 100 ? 'Усвоено' : 'В процессе'}</span></div>
+    <div className="potion-body"><div className="potion-detail"><span className="eyebrow">ПОСЛЕДОВАТЕЛЬНОСТЬ {c.sequence}</span><h2>{c.potion}</h2><span className="potion-pathway">Путь «{c.pathway}»</span></div><div className="progress-circle" role="progressbar" aria-label="Усвоение зелья" aria-valuenow={c.digestion} aria-valuemin={0} aria-valuemax={100}><svg viewBox="0 0 140 140" aria-hidden="true"><circle className="circle-track" cx="70" cy="70" r="61" /><circle className="circle-value" cx="70" cy="70" r="61" strokeDasharray={`${2 * Math.PI * 61}`} strokeDashoffset={2 * Math.PI * 61 * (1 - c.digestion / 100)} /></svg><div><strong>{c.digestion}<small>%</small></strong><span>усвоено</span></div></div></div>
+    <div className="progress-track"><span style={{ width: `${c.digestion}%` }} /></div>
+    <p className="potion-message">{c.digestion === 100 ? 'Зелье усвоено. Можно готовиться к следующему шагу.' : 'Каждая прожитая сцена помогает лучше понять свою роль.'}</p>
+    <div className="potion-footer"><span>{c.sequence === 0 ? 'Высшая последовательность' : `Далее — последовательность ${c.sequence - 1}`}</span><button className="text-button" disabled={c.digestion < 100 || c.sequence === 0} onClick={onAdvance}>{c.sequence === 0 ? 'Вершина пути' : 'Продвинуться'}<ArrowRight size={16} /></button></div>
+  </section>;
 }
 
 function App() {
@@ -114,39 +117,59 @@ function App() {
   const [activeId, setActiveId] = useState(initial.characters[0]?.id ?? '');
   const [view, setView] = useState<View>('characters');
   const [modal, setModal] = useState<Modal>(null);
+  const [editingEntry, setEditingEntry] = useState<Entry | null>(null);
   const [query, setQuery] = useState('');
+  const [journalQuery, setJournalQuery] = useState('');
   const [notice, setNotice] = useState('');
   const importRef = useRef<HTMLInputElement>(null);
   const active = characters.find(c => c.id === activeId) ?? characters[0];
   const filtered = characters.filter(c => `${c.name} ${c.pathway}`.toLocaleLowerCase('ru').includes(query.toLocaleLowerCase('ru')));
+  const journalEntries = active?.entries.filter(e => `${e.title} ${e.note}`.toLocaleLowerCase('ru').includes(journalQuery.toLocaleLowerCase('ru'))) ?? [];
 
   useEffect(() => {
     if (!notice) return;
-    const timeout = window.setTimeout(() => setNotice(''), 4500);
+    const timeout = window.setTimeout(() => setNotice(''), 5500);
     return () => window.clearTimeout(timeout);
   }, [notice]);
 
-  function persist(next: Character[]) {
-    setCharacters(next);
-    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); setStorageError(''); return true; }
-    catch { setStorageError('Браузер не смог сохранить изменения. Они доступны до закрытия страницы. Скачайте резервную копию архива.'); return false; }
+  function persist(next: Character[], keepInMemory = true) {
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(next)); setCharacters(next); setStorageError(''); return true; }
+    catch {
+      if (keepInMemory) setCharacters(next);
+      setStorageError(keepInMemory ? 'Браузер не смог сохранить изменения. Они доступны до закрытия страницы. Скачайте резервную копию архива.'
+        : 'Браузер не смог сохранить запись. Текст остался в редакторе. Скачайте архив существующих анкет перед освобождением места в браузере.');
+      return false;
+    }
   }
-  function saveCharacter(character: Character) {
+  function saveCharacter(character: Character, message = 'Анкета сохранена') {
     const saved = persist(characters.some(c => c.id === character.id) ? characters.map(c => c.id === character.id ? character : c) : [...characters, character]);
-    setActiveId(character.id);
-    setModal(null);
-    setNotice(!saved ? 'Изменения пока только в памяти — скачайте архив' : modal === 'entry' ? 'Запись добавлена в дневник' : modal === 'advance' ? 'Начался новый этап вашего пути' : 'Анкета сохранена');
+    setActiveId(character.id); setModal(null);
+    setNotice(saved ? message : 'Изменения пока только в памяти — скачайте архив');
   }
+  function saveJournalEntry(character: Character) {
+    const saved = persist(characters.map(c => c.id === character.id ? character : c), false);
+    setNotice(saved ? 'Запись добавлена в дневник' : 'Запись не сохранена — текст остался в редакторе');
+    return saved;
+  }
+  function focusComposer() {
+    window.requestAnimationFrame(() => {
+      const field = document.getElementById('journal-note');
+      field?.focus({ preventScroll: true });
+      field?.scrollIntoView({ behavior: window.matchMedia('(prefers-reduced-motion: reduce)').matches ? 'instant' : 'smooth', block: 'center' });
+    });
+  }
+  function selectCharacter(id: string) { setActiveId(id); setView('characters'); setQuery(''); setJournalQuery(''); }
+  function editEntry(entry: Entry) { setEditingEntry(entry); setModal('edit-entry'); }
   function exportArchive() {
     const url = URL.createObjectURL(new Blob([JSON.stringify({ version: 1, characters }, null, 2)], { type: 'application/json' }));
     const link = document.createElement('a'); link.href = url; link.download = 'ant-lotm-archive.json'; link.click();
     window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-    setNotice('Резервная копия подготовлена');
+    setNotice('Резервная копия с анкетами и портретами подготовлена');
   }
   async function importArchive(file?: File) {
     if (!file) return;
     try {
-      if (file.size > 5 * 1024 * 1024) throw new Error('Файл слишком большой. Максимум — 5 МБ.');
+      if (file.size > 20 * 1024 * 1024) throw new Error('Файл слишком большой. Максимум — 20 МБ.');
       const data: unknown = JSON.parse(await file.text());
       const incoming = data && typeof data === 'object' && 'characters' in data ? data.characters : data;
       if (!Array.isArray(incoming) || !incoming.every(isCharacter) || new Set(incoming.map(c => c.id)).size !== incoming.length) throw new Error('В файле нет корректного архива персонажей.');
@@ -155,59 +178,60 @@ function App() {
       if (overlaps.length && !window.confirm(`Заменить ${overlaps.length} существующих анкет версиями из файла? Остальные анкеты сохранятся.`)) return;
       const merged = new Map(characters.map(c => [c.id, c]));
       incoming.forEach(c => merged.set(c.id, c));
-      const saved = persist([...merged.values()]); setActiveId(incoming[0].id); setView('characters'); setNotice(saved ? 'Архив импортирован' : 'Архив открыт в памяти — браузер не смог его сохранить');
+      const saved = persist([...merged.values()]); setActiveId(incoming[0].id); setView('characters');
+      setNotice(saved ? 'Архив импортирован' : 'Архив открыт в памяти — браузер не смог его сохранить');
     } catch (error) { setNotice(error instanceof Error ? error.message : 'Не удалось импортировать архив.'); }
   }
 
   return <div className="app-shell">
     <aside className="sidebar">
       <a className="brand" href="#" onClick={event => { event.preventDefault(); setView('characters'); }}><div className="brand-mark"><Seal /></div><div>ANT<span>LOTM ARCHIVE</span></div></a>
-      <div className="sidebar-rule" />
-      <div className="nav-label">ВАШ АРХИВ</div>
+      <div className="sidebar-rule" /><div className="nav-label">ВАШ ТИХИЙ УГОЛОК</div>
       <nav className="main-nav" aria-label="Основная навигация">
-        <button className={view === 'characters' ? 'selected' : ''} onClick={() => setView('characters')}><Users size={18} />Мои персонажи<span className="nav-count">{characters.length.toString().padStart(2, '0')}</span></button>
-        <button className={view === 'journal' ? 'selected' : ''} onClick={() => setView('journal')}><BookOpen size={18} />Дневник отыгрыша</button>
-        <button className={view === 'guide' ? 'selected' : ''} onClick={() => setView('guide')}><Compass size={18} />О системе</button>
+        <button className={view === 'characters' ? 'selected' : ''} onClick={() => setView('characters')}><Users size={19} />Мои персонажи<span className="nav-count">{characters.length}</span></button>
+        <button className={view === 'journal' ? 'selected' : ''} onClick={() => setView('journal')}><BookOpen size={19} />Дневник отыгрыша</button>
+        <button className={view === 'guide' ? 'selected' : ''} onClick={() => setView('guide')}><Compass size={19} />О системе</button>
       </nav>
-      <div className="character-nav-title"><span>ПЕРСОНАЖИ</span><button aria-label="Создать персонажа" onClick={() => setModal('create')}><Plus size={16} /></button></div>
-      <div className="character-nav">{characters.map(c => <button key={c.id} className={active?.id === c.id ? 'active-character' : ''} onClick={() => { setActiveId(c.id); setView('characters'); setQuery(''); }}><span className="mini-avatar">{c.name[0]}</span><span className="character-nav-name">{c.name}<small>{c.potion} · {c.sequence}</small></span>{active?.id === c.id && <span className="tiny-dot" />}</button>)}{!characters.length && <p className="sidebar-empty">Здесь появятся герои<br />вашей истории.</p>}</div>
-      <div className="sidebar-bottom"><div className="sidebar-quote">«Мы — стражи. И ещё —<br />кучка несчастных…»</div><span>ПОВЕЛИТЕЛЬ ТАЙН</span><div className="local-status"><span />Локальный архив<Shield size={13} /></div></div>
+      <div className="character-nav-title"><span>ПЕРСОНАЖИ</span><button aria-label="Создать персонажа" onClick={() => setModal('create')}><Plus size={18} /></button></div>
+      <div className="character-nav">{characters.map(c => <button key={c.id} className={active?.id === c.id ? 'active-character' : ''} onClick={() => selectCharacter(c.id)}><span className="mini-avatar">{c.portrait ? <img src={c.portrait} alt="" /> : c.name[0]}</span><span className="character-nav-name">{c.name}<small>{c.potion} · {c.sequence}</small></span>{active?.id === c.id && <span className="tiny-dot" />}</button>)}{!characters.length && <p className="sidebar-empty">Здесь появятся герои<br />вашей истории.</p>}</div>
+      <div className="sidebar-bottom"><Seal className="sidebar-seal" /><p>Понять роль.<br />Прожить её.<br /><em>Остаться собой.</em></p><div className="local-status"><span />Хранится на устройстве<Shield size={14} /></div></div>
     </aside>
-
     <div className="workspace">
-      <header className="topbar"><div className="breadcrumb"><FolderOpen size={16} /><span>Архив</span><ChevronRight size={13} /><strong>{view === 'journal' ? 'Дневник отыгрыша' : view === 'guide' ? 'О системе' : 'Анкеты персонажей'}</strong></div><div className="topbar-right"><span className="edition">ЛИЧНОЕ СОБРАНИЕ</span><button className="icon-button" aria-label="Помощь" onClick={() => setView('guide')}><CircleHelp size={19} /></button><span className="user-avatar">А</span></div></header>
-
+      <header className="topbar"><div className="breadcrumb"><FolderOpen size={17} /><span>Личный архив</span><ChevronRight size={14} /><strong>{view === 'journal' ? 'Дневник' : view === 'guide' ? 'О системе' : 'Персонажи'}</strong></div><div className="topbar-right"><span className="edition">ПО ТУ СТОРОНУ ТУМАНА</span><button className="icon-button" aria-label="Помощь" onClick={() => setView('guide')}><CircleHelp size={21} /></button></div></header>
       <main>
-        {storageError && <div className="storage-error" role="alert"><Shield size={20} /><span>{storageError}</span><button className="text-button" onClick={exportArchive}>Скачать архив</button></div>}
+        {storageError && <div className="storage-error" role="alert"><Shield size={21} /><span>{storageError}</span><button className="text-button" onClick={exportArchive}>Скачать архив</button></div>}
         {view === 'guide' ? <>
-          <div className="page-heading"><div><div className="eyebrow">НЕБОЛЬШОЙ ПУТЕВОДИТЕЛЬ</div><h1>За пределами обычного</h1><p>Как вести анкету и сохранять историю своего пути.</p></div><Compass className="heading-icon" size={35} strokeWidth={1} /></div>
+          <div className="page-heading"><div><div className="eyebrow">НЕБОЛЬШОЙ ПУТЕВОДИТЕЛЬ</div><h1>Здесь живут ваши истории</h1><p>Всё, что нужно для уютного личного архива.</p></div><Compass className="heading-icon" size={38} strokeWidth={1} /></div>
           <section className="guide-grid">{[
-            ['01', 'Создайте потустороннего', 'Укажите имя, путь, последовательность и название текущего зелья. Добавьте историю персонажа и собственные принципы отыгрыша. Названия зелий вводятся вручную — так можно использовать перевод и правила вашей игры.'],
-            ['02', 'Проживайте свою роль', 'Добавляйте события в дневник: отыгрыш, исследования, ритуалы или обычные заметки. Вы или ведущий задаёте изменение усвоения — положительное, отрицательное или нулевое. Автоматической оценки отыгрыша нет.'],
-            ['03', 'Продвигайтесь по пути', 'При 100% усвоения станет доступно продвижение к следующей последовательности. Назовите новое зелье: прогресс начнётся с нуля, а вся история сохранится. Решение о готовности ритуала остаётся за вами и ведущим.'],
-            ['04', 'Берегите свой архив', 'Анкеты сохраняются в этом браузере. Другие устройства и браузеры не получают их автоматически. Скачивайте JSON-копию перед очисткой данных браузера; импорт позволяет перенести архив и восстановить анкеты.'],
+            ['01', 'Придайте истории лицо', 'Создайте персонажа, выберите путь и зелье. Загрузите портрет в рамку на анкете или при её создании. Подойдут JPG, PNG и WebP до 12 МБ: изображение будет уменьшено и сохранено вместе с персонажем.'],
+            ['02', 'Просто начните писать', 'Большое поле в анкете всегда под рукой. Опишите событие, выберите тип и прибавку к усвоению, нажмите «Сохранить запись» или Ctrl+Enter. Заголовок можно не придумывать: возьмём первую строку. Черновик сохраняется отдельно для каждого персонажа на этом устройстве.'],
+            ['03', 'Продвигайтесь в своём темпе', 'При 100% усвоения доступна следующая последовательность. Новое зелье начинается с нуля, дневник остаётся с вами. Кнопка «Исправить» меняет только текст записи, сохраняя усвоение и дату. Правила и условия ритуала определяете вы и ведущий.'],
+            ['04', 'Берегите написанное', 'Анкеты и портреты хранятся в этом браузере. Скачивайте JSON-архив перед обновлением HTML-файла, перемещением, сменой браузера или очисткой его данных. В резервную копию входят портреты и сохранённые записи; незавершённые черновики остаются только на устройстве. Старые архивы без картинок тоже поддерживаются.'],
           ].map(([n, title, text]) => <article className="card guide-card" key={n}><span className="guide-number">{n}</span><h2>{title}</h2><p>{text}</p></article>)}</section>
-          <div className="archive-tools"><button className="button secondary" onClick={exportArchive}><ArrowDownToLine size={16} />Скачать архив</button><button className="button secondary" onClick={() => importRef.current?.click()}><Upload size={16} />Импортировать архив</button></div>
+          <div className="archive-tools"><button className="button secondary" onClick={exportArchive}><ArrowDownToLine size={17} />Скачать архив</button><button className="button secondary" onClick={() => importRef.current?.click()}><Upload size={17} />Импортировать архив</button></div>
         </> : <>
-          <div className="page-heading"><div><div className="eyebrow">КАЖДЫЙ ПУТЬ НАЧИНАЕТСЯ С ПЕРВОГО ШАГА</div><h1>{view === 'journal' ? 'Дневник отыгрыша' : 'Мои персонажи'}<span className="heading-dot">.</span></h1><p>{view === 'journal' ? 'События, открытия и маленькие шаги к пониманию зелья.' : 'Ваши истории по ту сторону серого тумана.'}</p></div><button className="button primary" onClick={() => setModal(active && view === 'journal' ? 'entry' : 'create')}><Plus size={17} />{active && view === 'journal' ? 'Добавить запись' : 'Новый персонаж'}</button></div>
-
+          <div className="page-heading"><div><div className="eyebrow">ВАШИ ИСТОРИИ ПО ТУ СТОРОНУ ТУМАНА</div><h1>{view === 'journal' ? 'Дневник отыгрыша' : 'Мои персонажи'}<span className="heading-dot">.</span></h1><p>{view === 'journal' ? 'Место для сцен, открытий и мыслей между приключениями.' : 'Немного магии. Много характера. Вся история — здесь.'}</p></div><button className="button primary" onClick={() => active && view === 'journal' ? focusComposer() : setModal('create')}><Plus size={18} />{active && view === 'journal' ? 'Добавить запись' : 'Новый персонаж'}</button></div>
           {!active ? <>
-            <section className="empty-state card"><span className="corner-mark top-left">✧</span><span className="corner-mark bottom-right">✧</span><Seal className="empty-seal" /><div className="eyebrow">ЧИСТАЯ СТРАНИЦА. БЕСКОНЕЧНЫЕ ВОЗМОЖНОСТИ.</div><h2>У каждой тайны есть имя.<br />Как назовут вашу?</h2><p>Создайте своего первого потустороннего.<br />Сохраните его историю, выберите путь и начните усваивать зелье.</p><button className="button primary" onClick={() => setModal('create')}><Plus size={17} />Создать персонажа</button><button className="text-button import-empty" onClick={() => importRef.current?.click()}><Upload size={14} />У меня уже есть архив</button></section>
-            <div className="feature-grid"><div><Users size={21} strokeWidth={1.4} /><h3>Больше, чем имя</h3><p>История, характер и путь —<br />в одной анкете.</p></div><div><FlaskConical size={21} strokeWidth={1.4} /><h3>Каждый процент важен</h3><p>Следите за усвоением зелья<br />от первой капли до продвижения.</p></div><div><Feather size={21} strokeWidth={1.4} /><h3>Ничто не забыто</h3><p>События и открытия складываются<br />в личный дневник.</p></div></div>
+            <section className="empty-state card"><Seal className="empty-seal" /><div className="eyebrow">ЧИСТАЯ СТРАНИЦА. ВАША ИСТОРИЯ.</div><h2>У каждой тайны есть лицо.<br />Подарите своей имя.</h2><p>Создайте персонажа, добавьте любимый портрет<br />и начните записывать его путь.</p><button className="button primary" onClick={() => setModal('create')}><Plus size={18} />Создать персонажа</button><button className="text-button import-empty" onClick={() => importRef.current?.click()}><Upload size={16} />У меня уже есть архив</button></section>
+            <div className="feature-grid"><div><ImagePlus size={25} strokeWidth={1.4} /><h3>У истории есть лицо</h3><p>Портрет и характер<br />в одной анкете.</p></div><div><FlaskConical size={25} strokeWidth={1.4} /><h3>Шаг за шагом</h3><p>Наглядное усвоение зелья<br />и новые последовательности.</p></div><div><Feather size={25} strokeWidth={1.4} /><h3>Пространство для мыслей</h3><p>Удобный дневник,<br />который всегда под рукой.</p></div></div>
           </> : <>
-            <div className="archive-toolbar"><div className="character-tabs" aria-label="Выбор персонажа">{filtered.map(c => <button key={c.id} onClick={() => setActiveId(c.id)} className={active.id === c.id ? 'current' : ''}>{c.name}<span>{c.sequence}</span></button>)}{!filtered.length && <span className="no-results">Персонажи не найдены</span>}</div><label className="search"><Search size={15} /><input aria-label="Найти персонажа" placeholder="Найти персонажа…" value={query} onChange={e => setQuery(e.target.value)} /></label></div>
-            {view === 'journal' ? <section className="card journal-card"><div className="section-heading"><div><div className="eyebrow">ЛИЧНАЯ ХРОНИКА</div><h2>{active.name}</h2></div><span className="muted">Записей: {active.entries.length}</span></div><Entries entries={active.entries} /></section> : <>
-              <section className="character-hero"><div className="hero-background"><Seal /></div><div className="character-avatar">{active.name[0]}<span>✧</span></div><div className="hero-content"><div className="hero-label"><span />ДОСЬЕ ПОТУСТОРОННЕГО</div><h2>{active.name}</h2><p>{active.epithet || 'У каждой истории есть свои тайны'}</p><div className="hero-tags"><span><Compass size={13} />Путь «{active.pathway}»</span>{active.origin && <span><MapPin size={13} />{active.origin}</span>}</div></div><button className="button hero-edit" onClick={() => setModal('edit')}><Feather size={14} />Редактировать</button></section>
-
+            <div className="archive-toolbar"><div className="character-tabs" aria-label="Выбор персонажа">{filtered.map(c => <button key={c.id} onClick={() => { setActiveId(c.id); setJournalQuery(''); }} className={active.id === c.id ? 'current' : ''}>{c.name}<span>{c.sequence}</span></button>)}{!filtered.length && <span className="no-results">Персонажи не найдены</span>}</div><label className="search"><Search size={17} /><input aria-label="Найти персонажа" placeholder="Найти персонажа…" value={query} onChange={e => setQuery(e.target.value)} /></label></div>
+            {view === 'journal' ? <div className="journal-layout"><EntryComposer key={`journal-${active.id}`} character={active} onSave={saveJournalEntry} /><section className="card journal-card"><div className="section-heading"><div><div className="eyebrow">ЛИЧНАЯ ХРОНИКА</div><h2>{active.name}</h2></div><span className="muted">Записей: {active.entries.length}</span></div><label className="journal-search"><Search size={18} /><input aria-label="Поиск записей" placeholder="Найти событие или мысль…" value={journalQuery} onChange={e => setJournalQuery(e.target.value)} /></label>{journalQuery && !journalEntries.length ? <p className="no-results search-empty">По этому запросу записей нет.</p> : <Entries entries={journalEntries} onEdit={editEntry} />}</section></div> : <>
+              <section className="character-hero">
+                <div className="hero-background"><Seal /></div>
+                <button className={`character-portrait ${active.portrait ? 'has-portrait' : ''}`} onClick={() => setModal('portrait')} aria-label={active.portrait ? 'Изменить портрет персонажа' : 'Добавить портрет персонажа'}>{active.portrait ? <img src={active.portrait} alt={`Портрет ${active.name}`} /> : <div className="portrait-placeholder"><ImagePlus size={35} strokeWidth={1.2} /><span>Место для<br />вашего персонажа</span></div>}<span className="portrait-caption"><ImagePlus size={14} />{active.portrait ? 'Сменить портрет' : 'Добавить портрет'}</span></button>
+                <div className="hero-content"><div className="hero-label"><span />ДОСЬЕ ПОТУСТОРОННЕГО</div><h2>{active.name}</h2><p>{active.epithet || 'У каждой истории есть свои тайны'}</p><div className="hero-tags"><span><Compass size={15} />Путь «{active.pathway}»</span><span>Последовательность {active.sequence}</span>{active.origin && <span><MapPin size={15} />{active.origin}</span>}</div><button className="button hero-write" onClick={focusComposer}><Feather size={17} />Записать событие</button></div>
+                <button className="button hero-edit" onClick={() => setModal('edit')}><Pencil size={16} /><span>Редактировать</span></button>
+              </section>
               <div className="dashboard-grid"><div className="main-column">
-                <section className="card potion-card"><div className="section-heading"><div className="section-label"><FlaskConical size={17} /><span>УСВОЕНИЕ ЗЕЛЬЯ</span></div><span className="status-tag">{active.digestion === 100 ? 'Полностью усвоено' : 'В процессе'}</span></div><div className="potion-body"><div className="potion-detail"><span className="eyebrow">ПОСЛЕДОВАТЕЛЬНОСТЬ {active.sequence}</span><h2>{active.potion}</h2><p>{active.digestion === 100 ? 'Зелье усвоено. Впереди — следующая ступень вашего пути.' : 'Понять роль. Прожить её. Остаться собой.'}</p><div className="progress-track"><span style={{ width: `${active.digestion}%` }} /></div><div className="progress-label"><span>Усвоение</span><strong>{active.digestion} <span>/ 100%</span></strong></div></div><div className="progress-circle" role="progressbar" aria-label="Усвоение зелья" aria-valuenow={active.digestion} aria-valuemin={0} aria-valuemax={100}><svg viewBox="0 0 140 140" aria-hidden="true"><circle className="circle-track" cx="70" cy="70" r="61" /><circle className="circle-value" cx="70" cy="70" r="61" strokeDasharray={`${2 * Math.PI * 61}`} strokeDashoffset={2 * Math.PI * 61 * (1 - active.digestion / 100)} /></svg><div><FlaskConical size={23} strokeWidth={1.2} /><strong>{active.digestion}<small>%</small></strong><span>УСВОЕНО</span></div></div></div><div className="potion-footer"><span><span className="tiny-dot" />{active.sequence === 0 ? 'Высшая последовательность' : `Следующая ступень: последовательность ${active.sequence - 1}`}</span><button className="text-button" disabled={active.digestion < 100 || active.sequence === 0} onClick={() => setModal('advance')}>{active.sequence === 0 ? 'Вершина пути' : 'Продвинуться'}<ArrowRight size={15} /></button></div></section>
-
-                <section className="card activity-card"><div className="section-heading"><h2><History size={19} strokeWidth={1.5} />Последние события</h2><button className="text-button" onClick={() => setView('journal')}>Весь дневник<ArrowRight size={14} /></button></div><Entries entries={active.entries} limit={3} /><button className="add-entry" onClick={() => setModal('entry')}><Plus size={16} />Записать событие</button></section>
+                <EntryComposer key={active.id} character={active} onSave={saveJournalEntry} />
+                <section className="card activity-card"><div className="section-heading"><h2><History size={21} />Последние события</h2><button className="text-button" onClick={() => setView('journal')}>Весь дневник<ArrowRight size={16} /></button></div><Entries entries={active.entries} limit={3} onEdit={editEntry} /></section>
               </div><div className="right-column">
-                <section className="card profile-card"><div className="section-heading"><h2>О персонаже</h2><button className="icon-button" aria-label="Редактировать сведения о персонаже" onClick={() => setModal('edit')}><MoreHorizontal size={18} /></button></div><dl><div><dt>Последовательность</dt><dd className="sequence-badge">{active.sequence.toString().padStart(2, '0')}</dd></div><div><dt>Путь</dt><dd>{active.pathway}</dd></div><div><dt>Возраст</dt><dd>{active.age || 'Не указан'}</dd></div><div><dt>Род занятий</dt><dd>{active.occupation || 'Не указан'}</dd></div></dl>{active.bio ? <p className="bio">{active.bio}</p> : <p className="bio placeholder">За каждым потусторонним скрывается история. Добавьте свою в анкету.</p>}</section>
-                <section className="principles-card"><div className="section-heading"><h2><Sparkles size={17} strokeWidth={1.3} />Принципы отыгрыша</h2></div>{active.principles.trim() ? <ul>{active.principles.split('\n').map(p => p.trim()).filter(Boolean).map((p, index) => <li key={index}>{p}</li>)}</ul> : <><p>Не просто используйте способности — поймите того, кем стали.</p><button className="text-button" onClick={() => setModal('edit')}>Добавить свои принципы<Plus size={13} /></button></>}<div className="principle-reminder">Помните: вы лишь играете роль.</div></section>
+                <PotionCard character={active} onAdvance={() => setModal('advance')} />
+                <section className="card profile-card"><div className="section-heading"><h2>Ближе к персонажу</h2><button className="icon-button" aria-label="Редактировать сведения о персонаже" onClick={() => setModal('edit')}><Pencil size={17} /></button></div><dl><div><dt>Возраст</dt><dd>{active.age || 'Пока тайна'}</dd></div><div><dt>Род занятий</dt><dd>{active.occupation || 'Пока тайна'}</dd></div><div><dt>Родом из</dt><dd>{active.origin || 'Пока тайна'}</dd></div></dl>{active.bio ? <div className="bio">{active.bio}</div> : <button className="profile-add" onClick={() => setModal('edit')}><Plus size={15} />Рассказать историю персонажа</button>}</section>
+                <section className="principles-card"><div className="section-heading"><h2><Sparkles size={19} />Принципы отыгрыша</h2></div>{active.principles.trim() ? <ul>{active.principles.split('\n').map(p => p.trim()).filter(Boolean).map((p, index) => <li key={index}>{p}</li>)}</ul> : <><p>Не просто используйте способности — поймите того, кем стали.</p><button className="text-button" onClick={() => setModal('edit')}>Добавить свои принципы<Plus size={15} /></button></>}<div className="principle-reminder">Помните: вы лишь играете роль.</div></section>
               </div></div>
-              <div className="archive-actions"><button className="text-button" onClick={exportArchive}><ArrowDownToLine size={14} />Скачать архив</button><button className="text-button" onClick={() => importRef.current?.click()}><Upload size={14} />Импортировать</button><button className="text-button danger" onClick={() => setModal('delete')}><Trash2 size={14} />Удалить персонажа</button></div>
+              <div className="archive-actions"><button className="text-button" onClick={exportArchive}><ArrowDownToLine size={16} />Скачать архив</button><button className="text-button" onClick={() => importRef.current?.click()}><Upload size={16} />Импортировать</button><button className="text-button danger" onClick={() => setModal('delete')}><Trash2 size={16} />Удалить персонажа</button></div>
             </>}
           </>}
         </>}
@@ -215,11 +239,12 @@ function App() {
       </main>
     </div>
     <input ref={importRef} type="file" accept="application/json,.json" hidden aria-label="Импорт архива" onChange={e => { void importArchive(e.target.files?.[0]); e.target.value = ''; }} />
-    {notice && <div className="toast" role="status"><Check size={17} /><span>{notice}</span><button aria-label="Закрыть уведомление" onClick={() => setNotice('')}><X size={15} /></button></div>}
-    {(modal === 'create' || modal === 'edit') && <Dialog title={modal === 'create' ? 'Новая история' : 'Анкета персонажа'} subtitle={modal === 'create' ? 'Расскажите, кто скрывается по ту сторону тумана.' : 'Детали, из которых складывается ваша история.'} onClose={() => setModal(null)}><CharacterForm initial={modal === 'edit' ? active : undefined} onSave={saveCharacter} onClose={() => setModal(null)} /></Dialog>}
-    {modal === 'entry' && active && <Dialog title="Новая запись" subtitle={`Хроника ${active.name} · ${active.potion}`} onClose={() => setModal(null)}><EntryForm character={active} onSave={saveCharacter} onClose={() => setModal(null)} /></Dialog>}
-    {modal === 'advance' && active && <Dialog title="Следующая ступень" subtitle={`Последовательность ${active.sequence} → ${active.sequence - 1}`} onClose={() => setModal(null)}><form onSubmit={e => { e.preventDefault(); const potion = String(new FormData(e.currentTarget).get('potion') ?? '').trim(); if (potion) saveCharacter(advanceCharacter(active, potion)); }}><p className="advance-copy">Зелье «{active.potion}» полностью усвоено. Убедитесь, что ваш персонаж выполнил необходимые условия и ритуал продвижения.</p><label>Следующее зелье <span>*</span><input autoFocus name="potion" placeholder="Название нового зелья" maxLength={80} required pattern=".*\S.*" /></label><p className="form-hint">Усвоение нового зелья начнётся с 0%. Все записи останутся в дневнике.</p><div className="form-footer"><button type="button" className="button secondary" onClick={() => setModal(null)}><ArrowLeft size={15} />Назад</button><button className="button primary" type="submit">Продвинуться<ArrowRight size={15} /></button></div></form></Dialog>}
-    {modal === 'delete' && active && <Dialog title="Закрыть эту историю?" subtitle="Удаление персонажа" onClose={() => setModal(null)}><p className="advance-copy">Анкета «{active.name}» и все её записи будут удалены из этого браузера. Перед удалением можно скачать архив.</p><button className="text-button" onClick={exportArchive}><ArrowDownToLine size={15} />Сначала скачать архив</button><div className="form-footer"><button className="button secondary" onClick={() => setModal(null)}>Оставить персонажа</button><button className="button danger-button" onClick={() => { const remaining = characters.filter(c => c.id !== active.id); persist(remaining); setActiveId(remaining[0]?.id ?? ''); setModal(null); setNotice('Персонаж удалён'); }}><Trash2 size={15} />Удалить</button></div></Dialog>}
+    {notice && <div className="toast" role="status"><Check size={18} /><span>{notice}</span><button aria-label="Закрыть уведомление" onClick={() => setNotice('')}><X size={16} /></button></div>}
+    {(modal === 'create' || modal === 'edit') && <Dialog title={modal === 'create' ? 'Новая история' : 'Анкета персонажа'} subtitle={modal === 'create' ? 'Начните с имени. Остальное можно дописать позже.' : 'Детали, из которых складывается ваша история.'} onClose={() => setModal(null)}><CharacterForm initial={modal === 'edit' ? active : undefined} onSave={c => saveCharacter(c)} onClose={() => setModal(null)} /></Dialog>}
+    {modal === 'portrait' && active && <Dialog title="Лицо вашей истории" subtitle={`Портрет персонажа · ${active.name}`} onClose={() => setModal(null)}><PortraitForm character={active} onSave={c => saveCharacter(c, 'Портрет сохранён')} onClose={() => setModal(null)} /></Dialog>}
+    {modal === 'edit-entry' && active && editingEntry && <Dialog title="Исправить запись" subtitle={`Дневник · ${active.name}`} onClose={() => setModal(null)}><EditEntryForm character={active} entry={editingEntry} onSave={c => saveCharacter(c, 'Запись обновлена')} onClose={() => setModal(null)} /></Dialog>}
+    {modal === 'advance' && active && <Dialog title="Следующая ступень" subtitle={`Последовательность ${active.sequence} → ${active.sequence - 1}`} onClose={() => setModal(null)}><form onSubmit={e => { e.preventDefault(); const potion = String(new FormData(e.currentTarget).get('potion') ?? '').trim(); if (potion) saveCharacter(advanceCharacter(active, potion), 'Начался новый этап вашего пути'); }}><p className="advance-copy">Зелье «{active.potion}» полностью усвоено. Убедитесь, что ваш персонаж выполнил необходимые условия и ритуал продвижения.</p><label>Следующее зелье<input autoFocus name="potion" placeholder="Название нового зелья" maxLength={80} required pattern=".*\S.*" /></label><p className="form-hint">Усвоение нового зелья начнётся с 0%. Все записи останутся в дневнике.</p><div className="form-footer"><button type="button" className="button secondary" onClick={() => setModal(null)}><ArrowLeft size={16} />Назад</button><button className="button primary" type="submit">Продвинуться<ArrowRight size={16} /></button></div></form></Dialog>}
+    {modal === 'delete' && active && <Dialog title="Закрыть эту историю?" subtitle="Удаление персонажа" onClose={() => setModal(null)}><p className="advance-copy">Анкета «{active.name}», её портрет и записи будут удалены из этого браузера. Перед удалением можно скачать архив.</p><button className="text-button" onClick={exportArchive}><ArrowDownToLine size={17} />Сначала скачать архив</button><div className="form-footer"><button className="button secondary" onClick={() => setModal(null)}>Оставить персонажа</button><button className="button danger-button" onClick={() => { const remaining = characters.filter(c => c.id !== active.id); persist(remaining); try { localStorage.removeItem(`ant-lotm.draft.v1.${active.id}`); } catch { /* Archive warning is shown by persist. */ } setActiveId(remaining[0]?.id ?? ''); setModal(null); setNotice('Персонаж удалён'); }}><Trash2 size={16} />Удалить</button></div></Dialog>}
   </div>;
 }
 

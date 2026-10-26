@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { addEntry, advanceCharacter, createCharacter, isCharacter } from './model.ts';
+import { addEntry, advanceCharacter, createCharacter, editEntryText, isCharacter, journalTitle, MAX_PORTRAIT_LENGTH } from './model.ts';
 
 const character = () => ({ ...createCharacter(), name: 'Тестовый потусторонний' });
 
@@ -67,4 +67,43 @@ test('invalid entries and malformed imports are rejected', () => {
   assert.equal(isCharacter({ ...character(), sequence: -1 }), false);
   assert.equal(isCharacter({ ...character(), name: ' ' }), false);
   assert.equal(isCharacter({ ...character(), entries: [{ date: 'invalid' }] }), false);
+});
+
+test('old archives remain valid and safe embedded portraits survive progression', () => {
+  const old = character();
+  assert.ok(isCharacter(old));
+  assert.equal(old.portrait, undefined);
+  const portrait = 'data:image/jpeg;base64,YWJj';
+  const withPortrait = { ...old, portrait, digestion: 100 };
+  assert.ok(isCharacter(withPortrait));
+  assert.equal(advanceCharacter(withPortrait, 'Клоун').portrait, portrait);
+  assert.ok(isCharacter({ ...old, portrait: '' }));
+});
+
+test('portrait imports reject remote images, SVG, non-strings and oversized data', () => {
+  for (const portrait of ['https://example.com/portrait.png', 'data:image/svg+xml;base64,YWJj', 123, 'data:image/jpeg;base64,' + 'A'.repeat(MAX_PORTRAIT_LENGTH)]) {
+    assert.equal(isCharacter({ ...character(), portrait }), false);
+  }
+});
+
+test('a journal title can be inferred from the first line without requiring two fields', () => {
+  assert.equal(journalTitle('', '  Первое открытие\nПодробности события  '), 'Первое открытие');
+  assert.equal(journalTitle('  Свой заголовок  ', 'Другой текст'), 'Свой заголовок');
+  assert.equal(journalTitle('', 'А'.repeat(200)).length, 80);
+  assert.equal(journalTitle(' ', '\n '), '');
+});
+
+test('correcting a diary entry preserves digestion, dates and advancement history', () => {
+  const full = addEntry(character(), { title: 'Опечатка', note: 'Старый текст', kind: 'acting', delta: 100 });
+  const advanced = advanceCharacter(full, 'Клоун');
+  const corrected = editEntryText(advanced, full.entries[0].id, 'Исправлено', 'Новый текст');
+  assert.equal(corrected.digestion, 0);
+  assert.equal(corrected.sequence, 8);
+  assert.deepEqual(corrected.entries[0], advanced.entries[0]);
+  assert.equal(corrected.entries[1].title, 'Исправлено');
+  assert.equal(corrected.entries[1].delta, 100);
+  assert.equal(corrected.entries[1].date, full.entries[0].date);
+  assert.equal(advanced.entries[1].title, 'Опечатка');
+  assert.throws(() => editEntryText(advanced, full.entries[0].id, ' ', ' '));
+  assert.throws(() => editEntryText(advanced, 'missing-id', 'Название', 'Текст'));
 });

@@ -1,4 +1,5 @@
 export const STORAGE_KEY = 'ant-lotm.characters.v1';
+export const MAX_PORTRAIT_LENGTH = 700_000;
 
 export const PATHWAYS = [
   'Дурак', 'Ошибка', 'Дверь', 'Мечтатель', 'Солнце', 'Тиран',
@@ -29,6 +30,7 @@ export type Character = {
   origin: string;
   bio: string;
   principles: string;
+  portrait?: string;
   entries: Entry[];
 };
 
@@ -73,8 +75,26 @@ export function isCharacter(value: unknown): value is Character {
     .every(key => typeof (c as unknown as Record<string, unknown>)[key] === 'string')
     && c.name.trim().length > 0 && Number.isInteger(c.sequence) && c.sequence >= 0 && c.sequence <= 9
     && Number.isFinite(c.digestion) && c.digestion >= 0 && c.digestion <= 100
+    && (c.portrait === undefined || isPortrait(c.portrait))
     && Array.isArray(c.entries) && c.entries.every(e => e && typeof e.id === 'string'
       && typeof e.title === 'string' && typeof e.note === 'string' && typeof e.date === 'string'
       && Number.isFinite(new Date(e.date).getTime()) && Number.isFinite(e.delta)
       && ['acting', 'study', 'ritual', 'other', 'advance'].includes(e.kind));
+}
+
+export function isPortrait(value: unknown): value is string {
+  return typeof value === 'string' && (value === '' || (value.length <= MAX_PORTRAIT_LENGTH
+    && /^data:image\/(jpeg|png|webp);base64,[A-Za-z0-9+/]+={0,2}$/.test(value)));
+}
+
+export function journalTitle(title: string, note: string): string {
+  return title.trim() || note.trim().split('\n')[0].slice(0, 80);
+}
+
+export function editEntryText(character: Character, entryId: string, title: string, note: string): Character {
+  const resolvedTitle = journalTitle(title, note);
+  if (!resolvedTitle) throw new Error('Добавьте текст или название записи.');
+  if (!character.entries.some(e => e.id === entryId)) throw new Error('Запись не найдена.');
+  return { ...character, entries: character.entries.map(e => e.id === entryId
+    ? { ...e, title: resolvedTitle, note: note.trim() } : e) };
 }
