@@ -8,7 +8,7 @@
     "build": "tsc -b && vite build",
     "build:pc": "tsc -b && vite build --mode pc && node scripts/package-pc.mjs",
     "preview": "vite preview --host 0.0.0.0",
-    "test": "node --experimental-strip-types --test src/model.test.ts"
+    "test": "node --experimental-strip-types --test src/model.test.ts src/preferences.test.ts src/dice.test.ts src/archive.test.ts"
   },
   "dependencies": {
     "lucide-react": "1.61.0",
