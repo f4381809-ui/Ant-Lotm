@@ -1,32 +1,42 @@
 import { useEffect, useRef, useState } from 'react';
 import type { FormEvent } from 'react';
-import { ArrowRight, BookOpen, Check, Feather, FlaskConical, Save } from 'lucide-react';
-import { addEntry, journalTitle } from './model';
+import { BookOpen, Check, Feather, Save } from 'lucide-react';
+import { addAutomaticEntry, addEntry, getDigestionRules, journalTitle } from './model';
 import type { Character, Entry } from './model';
+import { EMPTY_EVIDENCE, isEvidence } from './digestion';
+import type { DigestionRules, SceneEvidence } from './digestion';
+import DigestionControls, { principleOptions } from './DigestionControls';
 
 type Kind = Exclude<Entry['kind'], 'advance'>;
-type Draft = { title: string; note: string; kind: Kind; delta: string };
-const emptyDraft = (): Draft => ({ title: '', note: '', kind: 'acting', delta: '5' });
+type Draft = { title: string; note: string; kind: Kind; delta: string; mode: DigestionRules['mode']; evidence: SceneEvidence };
+const emptyDraft = (mode: DigestionRules['mode']): Draft => ({ title: '', note: '', kind: 'acting', delta: '5', mode,
+  evidence: { ...EMPTY_EVIDENCE, principleTexts: [] } });
 const kinds: [Kind, string][] = [['acting', 'Отыгрыш'], ['study', 'Исследование'], ['ritual', 'Ритуал'], ['other', 'Заметка']];
 
-function loadDraft(key: string): Draft {
+function loadDraft(key: string, mode: DigestionRules['mode']): Draft {
   try {
     const raw = localStorage.getItem(key);
     if (raw) {
       const d = JSON.parse(raw) as Draft;
       if (d && typeof d.title === 'string' && typeof d.note === 'string' && typeof d.delta === 'string'
-        && kinds.some(([kind]) => d.kind === kind) && Number.isFinite(Number(d.delta))) return d;
+        && kinds.some(([kind]) => d.kind === kind) && Number.isFinite(Number(d.delta))) return {
+          ...d, mode: ['automatic', 'manual'].includes(d.mode) ? d.mode : 'manual',
+          evidence: isEvidence(d.evidence) ? d.evidence : { ...EMPTY_EVIDENCE, principleTexts: [] },
+        };
     }
   } catch { /* The editor remains usable if browser storage is unavailable. */ }
-  return emptyDraft();
+  return emptyDraft(mode);
 }
 
-export default function EntryComposer({ character, onSave, insertNote, onNoteConsumed }: {
+export default function EntryComposer({ character, onSave, insertNote, onNoteConsumed, onConfigureRules }: {
   character: Character; onSave: (c: Character) => boolean;
   insertNote: { id: string; text: string } | null; onNoteConsumed: () => void;
+  onConfigureRules: () => void;
 }) {
   const key = `ant-lotm.draft.v1.${character.id}`;
-  const [draft, setDraft] = useState(() => loadDraft(key));
+  const defaultMode = getDigestionRules(character).mode;
+  const [draft, setDraft] = useState(() => loadDraft(key, defaultMode));
+  const previousMode = useRef(defaultMode);
   const [draftSaved, setDraftSaved] = useState(true);
   const [insertError, setInsertError] = useState('');
   const lastInsert = useRef('');
@@ -34,8 +44,21 @@ export default function EntryComposer({ character, onSave, insertNote, onNoteCon
   const count = character.entries.length;
   const countLabel = count % 10 === 1 && count % 100 !== 11 ? 'запись'
     : [2, 3, 4].includes(count % 10) && ![12, 13, 14].includes(count % 100) ? 'записи' : 'записей';
-  const next = Math.round(Math.min(100, Math.max(0, character.digestion + (Number(draft.delta) || 0))) * 10) / 10;
   const patch = (change: Partial<Draft>) => setDraft(d => ({ ...d, ...change }));
+
+  useEffect(() => {
+    if (previousMode.current !== defaultMode) {
+      previousMode.current = defaultMode;
+      setDraft(d => ({ ...d, mode: defaultMode }));
+    }
+  }, [defaultMode]);
+
+  useEffect(() => {
+    const allowed = principleOptions(character.principles);
+    if (draft.evidence.principleTexts.some(p => !allowed.includes(p))) {
+      setDraft(d => ({ ...d, evidence: { ...d.evidence, principleTexts: d.evidence.principleTexts.filter(p => allowed.includes(p)) } }));
+    }
+  }, [character.principles, draft.evidence]);
 
   useEffect(() => {
     try {
@@ -65,10 +88,13 @@ export default function EntryComposer({ character, onSave, insertNote, onNoteCon
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const title = journalTitle(draft.title, draft.note);
-    if (!title || !Number.isFinite(Number(draft.delta))) return;
-    if (onSave(addEntry(character, { title, note: draft.note.trim(), kind: draft.kind, delta: Number(draft.delta) }))) {
-      setDraft(emptyDraft());
-    }
+    if (!title || (draft.mode === 'manual' && !Number.isFinite(Number(draft.delta)))) return;
+    try {
+      const input = { title, note: draft.note.trim(), kind: draft.kind };
+      const nextCharacter = draft.mode === 'automatic' ? addAutomaticEntry(character, { ...input, evidence: draft.evidence })
+        : addEntry(character, { ...input, delta: Number(draft.delta) });
+      if (onSave(nextCharacter)) { setDraft(emptyDraft(defaultMode)); setInsertError(''); }
+    } catch (cause) { setInsertError(cause instanceof Error ? cause.message : 'Не удалось сохранить запись.'); }
   }
 
   return <section className="card composer-card" aria-labelledby="composer-heading">
@@ -79,7 +105,8 @@ export default function EntryComposer({ character, onSave, insertNote, onNoteCon
       <textarea id="journal-note" name="note" className="journal-textarea" rows={6} value={draft.note} maxLength={10000} required={!draft.title.trim()} placeholder={'Запишите сцену, мысль или маленькое открытие…\nКак это помогло вашему персонажу понять свою роль?'} onChange={e => patch({ note: e.target.value })} />
       {insertError && <p className="field-error" role="alert">{insertError}</p>}
       <details className="optional-title" open={!!draft.title}><summary>Свой заголовок <span>необязательно</span></summary><label>Название записи<input name="title" value={draft.title} maxLength={120} placeholder="Иначе возьмём первую строку текста" onChange={e => patch({ title: e.target.value })} /></label></details>
-      <div className="digestion-control"><div className="digestion-control-heading"><span><FlaskConical size={17} />Прибавка к усвоению</span><span>{character.digestion}%<ArrowRight size={14} /><strong>{next}%</strong></span></div><div className="digestion-inputs"><div className="delta-presets">{[0, 1, 5, 10].map(n => <button type="button" key={n} aria-pressed={Number(draft.delta) === n} className={Number(draft.delta) === n ? 'chosen' : ''} onClick={() => patch({ delta: String(n) })}>{n > 0 ? '+' : ''}{n}%</button>)}</div><label className="custom-delta"><span>Своё значение</span><input type="number" aria-label="Изменение усвоения, %" min={-100} max={100} step="0.1" required value={draft.delta} onChange={e => patch({ delta: e.target.value })} /><span>%</span></label></div></div>
+      <DigestionControls character={character} kind={draft.kind} note={draft.note} mode={draft.mode} evidence={draft.evidence} delta={draft.delta}
+        onMode={mode => patch({ mode })} onEvidence={evidence => patch({ evidence })} onDelta={delta => patch({ delta })} onConfigure={onConfigureRules} />
       <div className="composer-footer"><div className="draft-state" role="status">{dirty ? <>{draftSaved ? <Check size={14} /> : <Save size={14} />}{draftSaved ? 'Черновик сохранён' : 'Черновик только в памяти'}</> : <><span className="keyboard-hint">Ctrl ↵</span>для быстрой записи</>}</div><button type="submit" className="button primary"><Feather size={16} />Сохранить запись</button></div>
     </form>
   </section>;
